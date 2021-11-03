@@ -1,8 +1,8 @@
 #include <iostream>
 #include <thread>
-//#include <string>
-#include <sys/types.h>
-//#include <sys/socket.h>
+
+#include <stdio.h>
+#include <winsock2.h>
 
 using namespace std;
 
@@ -377,6 +377,46 @@ void aiMain() {
 
 
 
+/////////////////////////
+//// NETWORKING ZONE ////
+/////////////////////////
+
+
+
+const int NET_PORT = 40332;
+const short NET_BUFFERLEN = 256;
+
+SOCKET s;
+struct sockaddr_in sother;
+int slen = sizeof(sother);
+char buffer[NET_BUFFERLEN];
+int recv_len;
+
+void netMain() {
+    while (true) {
+        cout << "Waiting for data..." << endl;
+        memset(buffer, '\0', NET_BUFFERLEN);
+        int recv_len = recvfrom(s, buffer, NET_BUFFERLEN, 0, (SOCKADDR*)&sother, &slen);
+        if (recv_len == SOCKET_ERROR) {
+            // normalnie tutaj powinnismy wejsc tylko gdy z zewnatrz zamkniemy socket
+            // wtedy nie ma gdzie wyslac i wysyla error
+            cout << "ERROR!!!" << endl;
+            exit(EXIT_FAILURE);
+        }
+
+        cout << "Received packet from " << inet_ntoa(sother.sin_addr) << ":" << ntohs(sother.sin_port) << endl;
+        cout << "Data: " << buffer << endl;
+    }
+}
+
+
+
+////////////////////////////////
+//// END OF NETWORKING ZONE ////
+////////////////////////////////
+
+
+
 int main() {
     //srand(time(NULL));
     //string text = "Hello world!";
@@ -384,13 +424,32 @@ int main() {
 
 
 
+    // otwieramy bramke SMS
+    WSADATA wsaData;
 
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (result != NO_ERROR) {
+        cout << "Network error 1" << endl;
+    }
 
-    //int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s == INVALID_SOCKET) {
+        cout << "Socket error 1" << endl;
+        //WSACleanup();
+    }
 
+    struct sockaddr_in server;
+    server.sin_family = AF_INET;
+    server.sin_addr.s_addr = INADDR_ANY;
+    server.sin_port = htons(NET_PORT);
 
+    //serwer
+    if (bind(s, (SOCKADDR*)&server, sizeof(server)) == SOCKET_ERROR) {
+        cout << "Bind error 1" << endl;
+        closesocket(s);
+    }
 
-
+    thread net(netMain);
 
 
 
@@ -406,6 +465,15 @@ int main() {
 
         again = askYesOrNo("Czy chcesz zagrac jeszcze raz?");
     }
+
+
+
+    // zamykamy bramke SMS
+    closesocket(s);
+    WSACleanup();
+    net.join();
+
+
 
     return 0;
 }
