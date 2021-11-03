@@ -1,6 +1,8 @@
 #include <iostream>
 #include <thread>
 //#include <string>
+#include <sys/types.h>
+//#include <sys/socket.h>
 
 using namespace std;
 
@@ -15,14 +17,9 @@ const short LINES[][3] = {
 const char SYMBOLS[] = {' ', 'O', 'X'};
 const string INPUTS[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9"};
 
-// game variables
-short board[] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-short turn = 1; // 1-gracz albo 2-komputer
-short winner = 0;
-bool aiPlaced = false;
 
 
-
+// functions
 void pause(bool message = true) {
     if (message) {
         cout << "Nacisnij dowolny klawisz, aby kontynuowac..." << endl;
@@ -65,137 +62,296 @@ short promptForTile() {
 
 
 
-bool checkWin() {
-    for (int i = 0; i < 8; i++) {
-        for (int j = 0; j < 3; j++) {
-            if (board[LINES[i][j]] != turn) {
-                break;
-            } else if (j == 2) {
-                return true;
+// classes
+class Board {
+    private:
+        short tiles[9];
+
+    public:
+        void setSymbol(int tile, short value) {
+            tiles[tile] = value;
+        }
+
+        short getSymbol(int tile) {
+            return tiles[tile];
+        }
+
+        void reset() {
+            for (int i = 0; i < 9; i++) {
+                tiles[i] = 0;
             }
         }
-    }
-    return false;
-}
 
-
-
-bool checkFill() {
-    for (int i = 0; i < 9; i++) {
-        if (board[i] == 0) {
-            return false;
+        bool isFilled() {
+            for (int i = 0; i < 9; i++) {
+                if (tiles[i] == 0) {
+                    return false;
+                }
+            }
+            return true;
         }
-    }
-    return true;
-}
+
+        short getWinner() {
+            for (int p = 1; p <= 2; p++) {
+                for (int i = 0; i < 8; i++) {
+                    for (int j = 0; j < 3; j++) {
+                        if (tiles[LINES[i][j]] != p) {
+                            break;
+                        } else if (j == 2) {
+                            return p;
+                        }
+                    }
+                }
+            }
+            return 0;
+        }
 
 
 
-void printBoard() {
-    for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) {
-            char symbol = SYMBOLS[board[i * 3 + j]];
-            cout << " " << symbol << " ";
-            if (j < 2) {
-                cout << "|";
+        void print() {
+            for (int i = 0; i < 3; i++) {
+                for (int j = 0; j < 3; j++) {
+                    char symbol = SYMBOLS[tiles[i * 3 + j]];
+                    cout << " " << symbol << " ";
+                    if (j < 2) {
+                        cout << "|";
+                    }
+                }
+                cout << endl;
+                if (i < 2) {
+                    cout << "-----------" << endl;
+                }
             }
         }
-        cout << endl;
-        if (i < 2) {
-            cout << "-----------" << endl;
+};
+
+
+
+class Game {
+    private:
+        // game variables
+        Board board = Board();
+        short turn = 1; // 1-gracz albo 2-komputer
+        short winner = 0; // -1: remis, 0: gra trwa, 1: gracz, 2: komputer
+        bool aiPlaced = false;
+
+
+    public:
+        Board* getBoard() {
+            return &board;
         }
-    }
-}
+
+        short getTurn() {
+            return turn;
+        }
+
+        void nextTurn() {
+            turn = turn == 1 ? 2 : 1;
+        }
+
+        bool isOver() {
+            return winner != 0;
+        }
+
+        void aiMarkPlacement() {
+            aiPlaced = true;
+        }
 
 
 
-void resetGame() {
-    for (int i = 0; i < 9; i++) {
-        board[i] = 0;
-    }
-    turn = 1; // 1-gracz albo 2-komputer
-    winner = 0;
-}
+        void reset() {
+            board.reset();
+            turn = 1; // 1-gracz albo 2-komputer
+            winner = 0;
+        }
 
 
 
-void printGame() {
-    cout << " --- KOLKO I KRZYZYK --- " << endl;
-    cout << endl;
+        void print() {
+            cout << " --- KOLKO I KRZYZYK --- " << endl;
+            cout << endl;
 
-    printBoard();
-    cout << endl;
+            board.print();
+            cout << endl;
 
-    if (turn == 1) {
-        cout << "Twoj ruch!" << endl;
-        short select = 0;
-        do {
-            select = promptForTile();
-            if (board[select] != 0) {
-                cout << "To pole jest juz wypelnione!" << endl;
+            if (turn == 1) {
+                cout << "Twoj ruch!" << endl;
+                short select = 0;
+                do {
+                    select = promptForTile();
+                    if (board.getSymbol(select) != 0) {
+                        cout << "To pole jest juz wypelnione!" << endl;
+                    }
+                } while (board.getSymbol(select) != 0);
+                board.setSymbol(select, turn);
+            } else {
+                cout << "Czekaj na ruch komputera..." << endl;
+                // czekamy az AI polozy symbol
+                while (!aiPlaced) {
+                    _sleep(500);
+                }
+                // jak polozyl, to gasimy flage i idziemy dalej
+                aiPlaced = false;
             }
-        } while (board[select] != 0);
-        board[select] = turn;
-    } else {
-        cout << "Czekaj na ruch komputera..." << endl;
-        // czekamy az AI polozy symbol
-        while (!aiPlaced) {
-            _sleep(500);
+
+            // to co ponizej potem wciagniemy pod yourTurn
+
+            short win = board.getWinner();
+            bool fill = board.isFilled();
+
+            // jezeli wygralismy, to ... wygralismy
+            if (win > 0) {
+                winner = win;
+                return;
+            }
+            // jesli plansza zapelniona, to remis
+            if (fill) {
+                winner = -1;
+                return;
+            }
+            // w przeciwnym razie, nastepny gracz
+            nextTurn();
         }
-        // jak polozyl, to gasimy flage i idziemy dalej
-        aiPlaced = false;
-    }
-
-    // to co ponizej potem wciagniemy pod yourTurn
-
-    bool win = checkWin();
-    bool fill = checkFill();
-
-    // jezeli wygralismy, to ... wygralismy
-    if (win) {
-        winner = turn;
-        return;
-    }
-    // jesli plansza zapelniona, to remis
-    if (fill) {
-        winner = -1;
-        return;
-    }
-    // w przeciwnym razie, nastepny gracz
-    if (turn == 1) {
-        turn = 2;
-    } else {
-        turn = 1;
-    }
-}
 
 
 
-void game() {
-    // inicjalizacja
-    resetGame();
+        void loop() {
+            // inicjalizacja
+            reset();
 
-    // rob kroki gry dopoki nie bedzie wyloniony zwyciezca
-    while (winner == 0) {
-        printGame();
-        cout << endl;
-    }
+            // rob kroki gry dopoki nie bedzie wyloniony zwyciezca
+            while (winner == 0) {
+                print();
+                cout << endl;
+            }
 
-    printBoard();
-    cout << endl;
+            board.print();
+            cout << endl;
 
-    // gdy juz mamy zwyciezce, wypisz go i pochwal
-    switch (winner) {
-        case 1:
-            cout << "Wygrales!!!" << endl;
-            break;
-        case 2:
-            cout << "Przegrales!!!" << endl;
-            break;
-        case -1:
-            cout << "Remis!" << endl;
-    }
-}
+            // gdy juz mamy zwyciezce, wypisz go i pochwal
+            switch (winner) {
+                case 1:
+                    cout << "Wygrales!!!" << endl;
+                    break;
+                case 2:
+                    cout << "Przegrales!!!" << endl;
+                    break;
+                case -1:
+                    cout << "Remis!" << endl;
+            }
+        }
+};
+
+
+
+// game object
+Game game = Game();
+
+
+
+class AI {
+    private:
+        //Game game;
+
+    public:
+        //AI(Game obj) {
+            //this->game = obj;
+        //}
+
+
+
+        short getLineDanger(int l) {
+            // zagrozenie liczymy dla komputera
+            // wzor: liczba symboli gracza - liczba symboli komputera
+            // n=2 oznacza ze gracz moze wygrac!
+            // n=-2 oznacza ze komputer moze wygrac!
+
+            short x = 0;
+
+            for (int i = 0; i < 3; i++) {
+                short n = game.getBoard()->getSymbol(LINES[l][i]);
+                switch(n) {
+                    case 1:
+                        x++;
+                        break;
+                    case 2:
+                        x--;
+                }
+            }
+
+            return x;
+        }
+
+
+
+        short getMoveRandom() {
+            while (true) {
+                short rnd = (rand()) % 9;
+                if (game.getBoard()->getSymbol(rnd) != 0) {
+                    continue;
+                }
+                return rnd;
+            }
+        }
+
+
+
+        short getMoveIntelligent() {
+            // w pierwszej kolejnosci, sprawdzamy czy komputer moze wygrac
+            for (int i = 0; i < 8; i++) {
+                if (getLineDanger(i) == -2) {
+                    // wstawiamy symbol w wolne miejsce i wygrywamy!
+                    for (int j = 0; j < 3; j++) {
+                        short x = LINES[i][j];
+                        if (game.getBoard()->getSymbol(x) == 0) {
+                            return x;
+                        }
+                    }
+                }
+            }
+
+            // teraz nie dopuszczamy zeby przeciwnik (czyli my) wygral
+            for (int i = 0; i < 8; i++) {
+                if (getLineDanger(i) == 2) {
+                    // linia jest zagrozona - wstawiamy symbol w wolne miejsce
+                    for (int j = 0; j < 3; j++) {
+                        short x = LINES[i][j];
+                        if (game.getBoard()->getSymbol(x) == 0) {
+                            return x;
+                        }
+                    }
+                }
+            }
+
+            // w przeciwnym wypadku, postaw symbol w losowym miejscu
+            return getMoveRandom();
+        }
+
+
+
+        void place() {
+            short x = -1;
+            do {
+                x = getMoveIntelligent();
+            } while (x == -1);
+            game.getBoard()->setSymbol(x, game.getTurn());
+            game.aiMarkPlacement();
+        }
+
+
+
+        void loop() {
+            // funkcja konczy sie gdy nastapi zwyciezca
+            while (!game.isOver()) {
+                if (game.getTurn() == 2) {
+                    place();
+                }
+
+                // co sekunde nastepuje decyzja
+                _sleep(1000);
+            }
+        }
+};
 
 
 
@@ -205,65 +361,12 @@ void game() {
 
 
 
-int aiGetLineDanger(int l) {
-    // zagrozenie liczymy dla komputera
-    // jesli komputer ma cokolwiek na danej linii postawione, wynosi 0
-    // jesli my postawilismy n symboli, to mamy n
-    // n=2 oznacza ze gracz moze wygrac!
-
-    for (int i = 0; i < 3; i++) {
-        short n = board[LINES[l][i]];
-        if (n == 2) {
-            return 0;
-        }
-        // todo
-    }
-}
-
-
-
-void aiPlaceRandom() {
-    while (!aiPlaced) {
-        short rnd = rand() % 9;
-        if (board[rnd] != 0) {
-            continue;
-        }
-        board[rnd] = turn;
-        aiPlaced = true;
-    }
-}
-
-
-
-void aiPlaceIntelligent() {
-    while (!aiPlaced) {
-        // w pierwszej kolejnosci, nie dopuszczamy zeby przeciwnik (czyli my) wygral
-        for (int i = 0; i < 8; i++) {
-
-        }
-
-
-        short rnd = rand() % 9;
-        if (board[rnd] != 0) {
-            continue;
-        }
-        board[rnd] = turn;
-        aiPlaced = true;
-    }
-}
-
-
-
 void aiMain() {
-    // funkcja konczy sie gdy nastapi zwyciezca
-    while (winner == 0) {
-        if (turn == 2) {
-            aiPlaceRandom();
-        }
+    // generator za kazdym razem zaczyna z tym samym stanem na watek, wiec robimy cos takiego
+    srand(time(NULL));
 
-        // co sekunde nastepuje decyzja
-        _sleep(1000);
-    }
+    AI ai = AI();
+    ai.loop();
 }
 
 
@@ -275,9 +378,21 @@ void aiMain() {
 
 
 int main() {
-    srand(time(NULL));
+    //srand(time(NULL));
     //string text = "Hello world!";
     //cout << text;
+
+
+
+
+
+    //int sock = socket(AF_INET, SOCK_DGRAM, 0);
+
+
+
+
+
+
 
     cout << "Witaj w Kolko i Krzyzyk!" << endl;
     cout << "Nacisnij dowolny klawisz aby rozpoczac gre!" << endl;
@@ -286,7 +401,7 @@ int main() {
     bool again = true;
     while (again) {
         thread ai(aiMain);
-        game();
+        game.loop();
         ai.join();
 
         again = askYesOrNo("Czy chcesz zagrac jeszcze raz?");
