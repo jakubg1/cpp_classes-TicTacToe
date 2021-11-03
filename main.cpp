@@ -20,6 +20,12 @@ const string INPUTS[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9"};
 
 
 // functions
+void sleep(int ms) {
+    this_thread::sleep_for(chrono::milliseconds(ms));
+}
+
+
+
 void pause(bool message = true) {
     if (message) {
         cout << "Nacisnij dowolny klawisz, aby kontynuowac..." << endl;
@@ -188,7 +194,7 @@ class Game {
                 cout << "Czekaj na ruch komputera..." << endl;
                 // czekamy az AI polozy symbol
                 while (!aiPlaced) {
-                    _sleep(500);
+                    sleep(500);
                 }
                 // jak polozyl, to gasimy flage i idziemy dalej
                 aiPlaced = false;
@@ -244,19 +250,14 @@ class Game {
 
 
 
-// game object
-Game game = Game();
-
-
-
 class AI {
     private:
-        //Game game;
+        Game* game;
 
     public:
-        //AI(Game obj) {
-            //this->game = obj;
-        //}
+        AI(Game* gamePtr) {
+            this->game = gamePtr;
+        }
 
 
 
@@ -269,7 +270,7 @@ class AI {
             short x = 0;
 
             for (int i = 0; i < 3; i++) {
-                short n = game.getBoard()->getSymbol(LINES[l][i]);
+                short n = game->getBoard()->getSymbol(LINES[l][i]);
                 switch(n) {
                     case 1:
                         x++;
@@ -287,7 +288,7 @@ class AI {
         short getMoveRandom() {
             while (true) {
                 short rnd = (rand()) % 9;
-                if (game.getBoard()->getSymbol(rnd) != 0) {
+                if (game->getBoard()->getSymbol(rnd) != 0) {
                     continue;
                 }
                 return rnd;
@@ -303,7 +304,7 @@ class AI {
                     // wstawiamy symbol w wolne miejsce i wygrywamy!
                     for (int j = 0; j < 3; j++) {
                         short x = LINES[i][j];
-                        if (game.getBoard()->getSymbol(x) == 0) {
+                        if (game->getBoard()->getSymbol(x) == 0) {
                             return x;
                         }
                     }
@@ -316,7 +317,7 @@ class AI {
                     // linia jest zagrozona - wstawiamy symbol w wolne miejsce
                     for (int j = 0; j < 3; j++) {
                         short x = LINES[i][j];
-                        if (game.getBoard()->getSymbol(x) == 0) {
+                        if (game->getBoard()->getSymbol(x) == 0) {
                             return x;
                         }
                     }
@@ -334,24 +335,29 @@ class AI {
             do {
                 x = getMoveIntelligent();
             } while (x == -1);
-            game.getBoard()->setSymbol(x, game.getTurn());
-            game.aiMarkPlacement();
+            game->getBoard()->setSymbol(x, game->getTurn());
+            game->aiMarkPlacement();
         }
 
 
 
         void loop() {
             // funkcja konczy sie gdy nastapi zwyciezca
-            while (!game.isOver()) {
-                if (game.getTurn() == 2) {
+            while (!game->isOver()) {
+                if (game->getTurn() == 2) {
                     place();
                 }
 
                 // co sekunde nastepuje decyzja
-                _sleep(1000);
+                sleep(1000);
             }
         }
 };
+
+
+
+// game object
+Game game = Game();
 
 
 
@@ -365,7 +371,7 @@ void aiMain() {
     // generator za kazdym razem zaczyna z tym samym stanem na watek, wiec robimy cos takiego
     srand(time(NULL));
 
-    AI ai = AI();
+    AI ai = AI(&game);
     ai.loop();
 }
 
