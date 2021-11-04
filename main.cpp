@@ -165,7 +165,7 @@ class Networking {
 
 
 
-        void send(char buffer[]) {
+        void send(const char buffer[]) {
             string address = inet_ntoa(sother.sin_addr);
             unsigned short port = ntohs(sother.sin_port);
 
