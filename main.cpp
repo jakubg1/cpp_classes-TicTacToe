@@ -118,8 +118,6 @@ class Networking {
         // jesli nic, to send zakonczy sie bledem!
         struct sockaddr_in sother;
         int slen = sizeof(sother);
-        char buffer[NET_BUFFERLEN];
-        int recv_len;
     
 
 
@@ -182,12 +180,13 @@ class Networking {
 
 
         NET_RECVDATA waitAndReceive() {
+            char buffer[NET_BUFFERLEN];
             memset(buffer, '\0', NET_BUFFERLEN);
             int recv_len = recvfrom(s, buffer, NET_BUFFERLEN, 0, (SOCKADDR*)&sother, &slen);
             if (recv_len == SOCKET_ERROR) {
                 // normalnie tutaj powinnismy wejsc tylko gdy z zewnatrz zamkniemy socket
                 // wtedy nie ma gdzie wyslac i wysyla error
-                cout << "[RECV] Error - networking terminated!" << endl;
+				cout << "[RECV] Error - networking terminated! (EC:" << WSAGetLastError() << ")" << endl;
                 exit(EXIT_FAILURE);
             }
 
