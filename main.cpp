@@ -17,6 +17,15 @@ const short LINES[][3] = {
 const char SYMBOLS[] = {' ', 'O', 'X'};
 const string INPUTS[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9"};
 
+const int NET_PORT = 40332;
+const short NET_BUFFERLEN = 256;
+
+struct NET_RECVDATA {
+    string address;
+    unsigned short port;
+    char data[NET_BUFFERLEN];
+};
+
 
 
 // functions
@@ -47,6 +56,39 @@ bool askYesOrNo(string message) {
 
 
 
+short promptForChoice(string choices[], short n_choices) {
+    short select = -1;
+    while (select == -1) {
+        for (short i = 0; i < n_choices; i++) {
+            cout << (i + 1) << ") " << choices[i] << endl;
+        }
+        cout << "Wybierz: ";
+        string input;
+        cin >> input;
+        short inn;
+        try {
+            inn = stoi(input);
+        } catch (const exception& e) {
+            inn = -1;
+        }
+        if (inn > 0 && inn <= n_choices) {
+            for (short i = 1; i <= n_choices; i++) {
+                if (inn == i) {
+                    select = i;
+                    break;
+                }
+            }
+        }
+        if (select == -1) {
+            cout << "Nieprawidlowy wybor! Wpisz liczbe od 1 do " << n_choices << "." << endl;
+        }
+    }
+
+    return select;
+}
+
+
+
 short promptForTile() {
     short select = -1;
     while (select == -1) {
@@ -69,9 +111,114 @@ short promptForTile() {
 
 
 // classes
+class Networking {
+    private:
+        SOCKET s;
+        // sother wypelnia sie "danymi kontaktowymi" miejsca skad przyszla ostatnia ramka
+        // jesli nic, to send zakonczy sie bledem!
+        struct sockaddr_in sother;
+        int slen = sizeof(sother);
+        char buffer[NET_BUFFERLEN];
+        int recv_len;
+    
+
+
+    public:
+        void start() {
+            // otwieramy bramke SMS
+            WSADATA wsaData;
+
+            int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+            if (result != NO_ERROR) {
+                cout << "Network error 1" << endl;
+            }
+
+            s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (s == INVALID_SOCKET) {
+                cout << "Socket error 1" << endl;
+                //WSACleanup();
+            }
+
+            struct sockaddr_in server;
+            server.sin_family = AF_INET;
+            server.sin_addr.s_addr = INADDR_ANY;
+            server.sin_port = htons(NET_PORT);
+
+            //serwer
+            if (bind(s, (SOCKADDR*)&server, sizeof(server)) == SOCKET_ERROR) {
+                cout << "Bind error 1" << endl;
+                closesocket(s);
+            }
+        }
+
+
+
+        void stop() {
+            // zamykamy bramke SMS
+            closesocket(s);
+            WSACleanup();
+        }
+
+
+
+        void recv(NET_RECVDATA data) {
+            cout << "[RECV] (" << data.address << ":" << data.port << ") -> " << data.data << endl;
+        }
+
+
+
+        void send(char buffer[]) {
+            string address = inet_ntoa(sother.sin_addr);
+            unsigned short port = ntohs(sother.sin_port);
+
+            int send_len = sendto(s, buffer, strlen(buffer), 0, (SOCKADDR*)&sother, slen);
+            if (send_len == SOCKET_ERROR) {
+                cout << "[SEND] (" << address << ":" << port << ") Error - didn't send anything! (EC:" << WSAGetLastError() << ")" << endl;
+            } else {
+                cout << "[SEND] (" << address << ":" << port << ") <- " << buffer << endl;
+            }
+        }
+
+
+
+        NET_RECVDATA waitAndReceive() {
+            memset(buffer, '\0', NET_BUFFERLEN);
+            int recv_len = recvfrom(s, buffer, NET_BUFFERLEN, 0, (SOCKADDR*)&sother, &slen);
+            if (recv_len == SOCKET_ERROR) {
+                // normalnie tutaj powinnismy wejsc tylko gdy z zewnatrz zamkniemy socket
+                // wtedy nie ma gdzie wyslac i wysyla error
+                cout << "[RECV] Error - networking terminated!" << endl;
+                exit(EXIT_FAILURE);
+            }
+
+            NET_RECVDATA result;
+            result.address = inet_ntoa(sother.sin_addr);
+            result.port = ntohs(sother.sin_port);
+            for (short i = 0; i < NET_BUFFERLEN; i++) {
+                result.data[i] = buffer[i];
+            }
+            return result;
+        }
+
+
+
+        void loop() {
+            while (true) {
+                NET_RECVDATA data = waitAndReceive();
+                recv(data);
+            }
+        }
+};
+
+Networking netw = Networking();
+
+
+
 class Board {
     private:
         short tiles[9];
+
+
 
     public:
         void setSymbol(int tile, short value) {
@@ -142,6 +289,7 @@ class Game {
         bool aiPlaced = false;
 
 
+
     public:
         Board* getBoard() {
             return &board;
@@ -167,7 +315,7 @@ class Game {
 
         void reset() {
             board.reset();
-            turn = 1; // 1-gracz albo 2-komputer
+            turn = 1;
             winner = 0;
         }
 
@@ -222,13 +370,11 @@ class Game {
 
 
         void loop() {
-            // inicjalizacja
-            reset();
-
             // rob kroki gry dopoki nie bedzie wyloniony zwyciezca
             while (winner == 0) {
                 print();
                 cout << endl;
+                netw.send("test");
             }
 
             board.print();
@@ -253,6 +399,8 @@ class Game {
 class AI {
     private:
         Game* game;
+
+
 
     public:
         AI(Game* gamePtr) {
@@ -356,7 +504,7 @@ class AI {
 
 
 
-// game object
+// objects
 Game game = Game();
 
 
@@ -389,30 +537,10 @@ void aiMain() {
 
 
 
-const int NET_PORT = 40332;
-const short NET_BUFFERLEN = 256;
-
-SOCKET s;
-struct sockaddr_in sother;
-int slen = sizeof(sother);
-char buffer[NET_BUFFERLEN];
-int recv_len;
 
 void netMain() {
-    while (true) {
-        cout << "Waiting for data..." << endl;
-        memset(buffer, '\0', NET_BUFFERLEN);
-        int recv_len = recvfrom(s, buffer, NET_BUFFERLEN, 0, (SOCKADDR*)&sother, &slen);
-        if (recv_len == SOCKET_ERROR) {
-            // normalnie tutaj powinnismy wejsc tylko gdy z zewnatrz zamkniemy socket
-            // wtedy nie ma gdzie wyslac i wysyla error
-            cout << "ERROR!!!" << endl;
-            exit(EXIT_FAILURE);
-        }
-
-        cout << "Received packet from " << inet_ntoa(sother.sin_addr) << ":" << ntohs(sother.sin_port) << endl;
-        cout << "Data: " << buffer << endl;
-    }
+    netw.start();
+    netw.loop();
 }
 
 
@@ -424,47 +552,16 @@ void netMain() {
 
 
 int main() {
-    //srand(time(NULL));
-    //string text = "Hello world!";
-    //cout << text;
-
-
-
-    // otwieramy bramke SMS
-    WSADATA wsaData;
-
-    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (result != NO_ERROR) {
-        cout << "Network error 1" << endl;
-    }
-
-    s = socket(AF_INET, SOCK_DGRAM, 0);
-    if (s == INVALID_SOCKET) {
-        cout << "Socket error 1" << endl;
-        //WSACleanup();
-    }
-
-    struct sockaddr_in server;
-    server.sin_family = AF_INET;
-    server.sin_addr.s_addr = INADDR_ANY;
-    server.sin_port = htons(NET_PORT);
-
-    //serwer
-    if (bind(s, (SOCKADDR*)&server, sizeof(server)) == SOCKET_ERROR) {
-        cout << "Bind error 1" << endl;
-        closesocket(s);
-    }
-
     thread net(netMain);
 
-
-
     cout << "Witaj w Kolko i Krzyzyk!" << endl;
-    cout << "Nacisnij dowolny klawisz aby rozpoczac gre!" << endl;
-    pause(false);
+    cout << "Wybierz jedno z ponizszych aby rozpoczac gre!" << endl;
+    string choices[] = {"Gram z komputerem", "Gram z inna osoba"};
+    promptForChoice(choices, 2);
 
     bool again = true;
     while (again) {
+        game.reset();
         thread ai(aiMain);
         game.loop();
         ai.join();
@@ -472,11 +569,7 @@ int main() {
         again = askYesOrNo("Czy chcesz zagrac jeszcze raz?");
     }
 
-
-
-    // zamykamy bramke SMS
-    closesocket(s);
-    WSACleanup();
+    netw.stop();
     net.join();
 
 
