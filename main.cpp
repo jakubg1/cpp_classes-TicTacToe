@@ -1,4 +1,5 @@
 #include <iostream>
+#include <sstream>
 #include <thread>
 
 #include <stdio.h>
@@ -17,8 +18,13 @@ const short LINES[][3] = {
 const char SYMBOLS[] = {' ', 'O', 'X'};
 const string INPUTS[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9"};
 
+const char SERVER[] = "127.0.0.1";
 const int NET_PORT = 40332;
 const short NET_BUFFERLEN = 256;
+
+
+
+short gameMode = 0; // 0 - z komputerem, 1 - jako serwer, 2 - jako klient
 
 struct NET_RECVDATA {
     string address;
@@ -56,7 +62,7 @@ bool askYesOrNo(string message) {
 
 
 
-short promptForChoice(string choices[], short n_choices) {
+short promptForChoice(const string choices[], short n_choices) {
     short select = -1;
     while (select == -1) {
         for (short i = 0; i < n_choices; i++) {
@@ -110,9 +116,17 @@ short promptForTile() {
 
 
 
+void recvPrint(NET_RECVDATA data) {
+    cout << "[RECV] (" << data.address << ":" << data.port << ") -> " << data.data << endl;
+}
+
+
+
 // classes
 class Networking {
     private:
+        bool isServer;
+
         SOCKET s;
         // sother wypelnia sie "danymi kontaktowymi" miejsca skad przyszla ostatnia ramka
         // jesli nic, to send zakonczy sie bledem!
@@ -122,7 +136,7 @@ class Networking {
 
 
     public:
-        void start() {
+        void start(bool isServer) {
             // otwieramy bramke SMS
             WSADATA wsaData;
 
@@ -137,16 +151,26 @@ class Networking {
                 //WSACleanup();
             }
 
-            struct sockaddr_in server;
-            server.sin_family = AF_INET;
-            server.sin_addr.s_addr = INADDR_ANY;
-            server.sin_port = htons(NET_PORT);
+            if (isServer) {
+                struct sockaddr_in server;
+                server.sin_family = AF_INET;
+                server.sin_addr.s_addr = INADDR_ANY;
+                server.sin_port = htons(NET_PORT);
 
-            //serwer
-            if (bind(s, (SOCKADDR*)&server, sizeof(server)) == SOCKET_ERROR) {
-                cout << "Bind error 1" << endl;
-                closesocket(s);
+                //serwer
+                if (bind(s, (SOCKADDR*)&server, sizeof(server)) == SOCKET_ERROR) {
+                    cout << "Bind error 1" << endl;
+                    closesocket(s);
+                }
+            } else {
+                //setup address structure
+                memset((char*)&sother, 0, sizeof(sother));
+                sother.sin_family = AF_INET;
+                sother.sin_port = htons(NET_PORT);
+                sother.sin_addr.S_un.S_addr = inet_addr(SERVER);
             }
+
+            this->isServer = isServer;
         }
 
 
@@ -155,12 +179,6 @@ class Networking {
             // zamykamy bramke SMS
             closesocket(s);
             WSACleanup();
-        }
-
-
-
-        void recv(NET_RECVDATA data) {
-            cout << "[RECV] (" << data.address << ":" << data.port << ") -> " << data.data << endl;
         }
 
 
@@ -179,7 +197,7 @@ class Networking {
 
 
 
-        NET_RECVDATA waitAndReceive() {
+        NET_RECVDATA recv() {
             char buffer[NET_BUFFERLEN];
             memset(buffer, '\0', NET_BUFFERLEN);
             int recv_len = recvfrom(s, buffer, NET_BUFFERLEN, 0, (SOCKADDR*)&sother, &slen);
@@ -197,15 +215,6 @@ class Networking {
                 result.data[i] = buffer[i];
             }
             return result;
-        }
-
-
-
-        void loop() {
-            while (true) {
-                NET_RECVDATA data = waitAndReceive();
-                recv(data);
-            }
         }
 };
 
@@ -314,7 +323,7 @@ class Game {
 
         void reset() {
             board.reset();
-            turn = 1;
+            turn = gameMode < 2 ? 1 : 2;
             winner = 0;
         }
 
@@ -337,9 +346,20 @@ class Game {
                     }
                 } while (board.getSymbol(select) != 0);
                 board.setSymbol(select, turn);
-            } else {
-                cout << "Czekaj na ruch komputera..." << endl;
-                // czekamy az AI polozy symbol
+
+                if (gameMode > 0) {
+                    stringstream ss;
+                    ss << "sets|" << select;
+                    netw.send(ss.str().c_str());
+                }
+            }
+            else {
+                if (gameMode == 0) {
+                    cout << "Czekaj na ruch komputera..." << endl;
+                } else {
+                    cout << "Czekaj na ruch przeciwnika..." << endl;
+                }
+                // czekamy az AI/przeciwnik polozy symbol
                 while (!aiPlaced) {
                     sleep(500);
                 }
@@ -373,7 +393,6 @@ class Game {
             while (winner == 0) {
                 print();
                 cout << endl;
-                netw.send("test");
             }
 
             board.print();
@@ -503,8 +522,45 @@ class AI {
 
 
 
+class Opponent {
+    private:
+        Game* game;
+        bool joined = false;
+
+
+
+    public:
+        Opponent(Game* gamePtr) {
+            this->game = gamePtr;
+        }
+
+
+
+        void markJoined() {
+            joined = true;
+        }
+
+        bool hasJoined() {
+            return joined;
+        }
+
+
+
+        void place(short x) {
+            if (!game->isOver() && game->getTurn() == 2) {
+                game->getBoard()->setSymbol(x, game->getTurn());
+                game->aiMarkPlacement();
+            } else {
+                cout << "Error: opponent wanted to place a symbol during your turn!" << endl;
+            }
+        }
+};
+
+
+
 // objects
 Game game = Game();
+Opponent opp = Opponent(&game);
 
 
 
@@ -515,6 +571,9 @@ Game game = Game();
 
 
 void aiMain() {
+    if (gameMode > 0)
+        return;
+    
     // generator za kazdym razem zaczyna z tym samym stanem na watek, wiec robimy cos takiego
     srand(time(NULL));
 
@@ -538,8 +597,38 @@ void aiMain() {
 
 
 void netMain() {
-    netw.start();
-    netw.loop();
+    if (gameMode == 0)
+        return;
+    
+    bool isServer = gameMode == 1;
+    netw.start(isServer);
+    if (!isServer) {
+        // trzeba cos wyslac, inaczej recv zwroci blad
+        netw.send("hello");
+    }
+
+    while (true) {
+        // petla przerwie sie w momencie wystapienia bledu, np. gdy zamkniemy polaczenie
+        NET_RECVDATA data = netw.recv();
+        string msg = data.data;
+
+        // interpretujemy rozne komunikaty
+        if (msg.compare("hello") == 0 && isServer) {
+            // serwer: gdy dostaniemy hello (sygnal ze podlaczyl sie klient)
+            opp.markJoined();
+            netw.send("hosthello");
+        }
+        else if (msg.compare("hosthello") == 0 && !isServer) {
+            // klient: gdy serwer odbierze hello i zwraca potwierdzenie
+            opp.markJoined();
+        }
+        else if (msg.compare(0, 5, "sets|") == 0) {
+            short x = stoi(msg.substr(5));
+            opp.place(x);
+        }
+
+        recvPrint(data);
+    }
 }
 
 
@@ -551,12 +640,25 @@ void netMain() {
 
 
 int main() {
-    thread net(netMain);
-
     cout << "Witaj w Kolko i Krzyzyk!" << endl;
     cout << "Wybierz jedno z ponizszych aby rozpoczac gre!" << endl;
     string choices[] = {"Gram z komputerem", "Gram z inna osoba"};
-    promptForChoice(choices, 2);
+    short choice = promptForChoice(choices, 2);
+    if (choice == 2) {
+        string choices2[] = {"Hostuj gre", "Dolacz do gry"};
+        gameMode = promptForChoice(choices2, 2);
+    }
+
+    cout << "Your game mode is: " << gameMode << endl;
+
+    thread net(netMain);
+    if (gameMode > 0 && !opp.hasJoined()) {
+        cout << "Oczekiwanie na drugiego gracza..." << endl;
+        // czekamy az drugi gracz dojdzie
+        while (!opp.hasJoined()) {
+            sleep(500);
+        }
+    }
 
     bool again = true;
     while (again) {
