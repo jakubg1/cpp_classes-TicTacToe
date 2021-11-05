@@ -18,13 +18,13 @@ const short LINES[][3] = {
 const char SYMBOLS[] = {' ', 'O', 'X'};
 const string INPUTS[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9"};
 
-const char SERVER[] = "127.0.0.1";
 const int NET_PORT = 40332;
 const short NET_BUFFERLEN = 256;
 
 
 
 short gameMode = 0; // 0 - z komputerem, 1 - jako serwer, 2 - jako klient
+string serverAddress = "";
 
 struct NET_RECVDATA {
     string address;
@@ -58,6 +58,16 @@ bool askYesOrNo(string message) {
     } while (choice != 'n' && choice != 'y');
 
     return choice == 'y';
+}
+
+
+
+string promptForInput(string message) {
+    string input = "";
+    cout << message;
+    cin >> input;
+
+    return input;
 }
 
 
@@ -136,7 +146,7 @@ class Networking {
 
 
     public:
-        void start(bool isServer) {
+        void start(bool isServer, string address = "127.0.0.1") {
             // otwieramy bramke SMS
             WSADATA wsaData;
 
@@ -167,7 +177,7 @@ class Networking {
                 memset((char*)&sother, 0, sizeof(sother));
                 sother.sin_family = AF_INET;
                 sother.sin_port = htons(NET_PORT);
-                sother.sin_addr.S_un.S_addr = inet_addr(SERVER);
+                sother.sin_addr.S_un.S_addr = inet_addr(address.c_str());
             }
 
             this->isServer = isServer;
@@ -296,6 +306,11 @@ class Game {
         short winner = 0; // -1: remis, 0: gra trwa, 1: gracz, 2: komputer
         bool aiPlaced = false;
 
+        int playerScore = 0;
+        int opponentScore = 0;
+        string playerName = "Ty";
+        string opponentName = "Komputer";
+
 
 
     public:
@@ -327,10 +342,34 @@ class Game {
             winner = 0;
         }
 
+        void resetScores() {
+            playerScore = 0;
+            opponentScore = 0;
+        }
+
+        string getPlayerName() {
+            return playerName;
+        }
+
+        void setPlayerName(string name) {
+            playerName = name;
+        }
+
+        string getOpponentName() {
+            return opponentName;
+        }
+
+        void setOpponentName(string name) {
+            opponentName = name;
+        }
+
 
 
         void print() {
             cout << " --- KOLKO I KRZYZYK --- " << endl;
+            cout << endl;
+
+            cout << "<<< " << playerName << " " << playerScore << " - " << opponentScore << " " << opponentName << " >>>" << endl;
             cout << endl;
 
             board.print();
@@ -375,6 +414,10 @@ class Game {
             // jezeli wygralismy, to ... wygralismy
             if (win > 0) {
                 winner = win;
+                if (win == 1)
+                    playerScore++;
+                else
+                    opponentScore++;
                 return;
             }
             // jesli plansza zapelniona, to remis
@@ -601,7 +644,7 @@ void netMain() {
         return;
     
     bool isServer = gameMode == 1;
-    netw.start(isServer);
+    netw.start(isServer, serverAddress);
     if (!isServer) {
         // trzeba cos wyslac, inaczej recv zwroci blad
         netw.send("hello");
@@ -617,12 +660,23 @@ void netMain() {
             // serwer: gdy dostaniemy hello (sygnal ze podlaczyl sie klient)
             opp.markJoined();
             netw.send("hosthello");
+            stringstream ss;
+            ss << "oppname|" << game.getPlayerName();
+            netw.send(ss.str().c_str());
         }
         else if (msg.compare("hosthello") == 0 && !isServer) {
             // klient: gdy serwer odbierze hello i zwraca potwierdzenie
             opp.markJoined();
+            stringstream ss;
+            ss << "oppname|" << game.getPlayerName();
+            netw.send(ss.str().c_str());
+        }
+        else if (msg.compare(0, 8, "oppname|") == 0) {
+            // informacja o nazwie przeciwnika
+            game.setOpponentName(msg.substr(8));
         }
         else if (msg.compare(0, 5, "sets|") == 0) {
+            // informacja o polozeniu symbolu na planszy
             short x = stoi(msg.substr(5));
             opp.place(x);
         }
@@ -645,8 +699,17 @@ int main() {
     string choices[] = {"Gram z komputerem", "Gram z inna osoba"};
     short choice = promptForChoice(choices, 2);
     if (choice == 2) {
-        string choices2[] = {"Hostuj gre", "Dolacz do gry"};
-        gameMode = promptForChoice(choices2, 2);
+        string choices[] = {"Hostuj gre", "Dolacz do gry"};
+        short choice = promptForChoice(choices, 2);
+        gameMode = choice;
+        if (choice == 2) {
+            string input = promptForInput("Wpisz IP serwera (lub X = localhost): ");
+            if (input.compare("x") == 0 || input.compare("X") == 0)
+                input = "127.0.0.1";
+            serverAddress = input;
+        }
+        string input = promptForInput("Podaj swoja nazwe: ");
+        game.setPlayerName(input);
     }
 
     cout << "Your game mode is: " << gameMode << endl;
