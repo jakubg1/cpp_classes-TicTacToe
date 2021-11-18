@@ -20,6 +20,7 @@ const string INPUTS[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9"};
 
 const int NET_PORT = 40332;
 const short NET_BUFFERLEN = 256;
+bool netVerbose = false;
 
 
 
@@ -197,11 +198,27 @@ class Networking {
             string address = inet_ntoa(sother.sin_addr);
             unsigned short port = ntohs(sother.sin_port);
 
+            /*
+            // swap spaces with underscores
+            char newbuf[NET_BUFFERLEN];
+            //cout << "BSTART:" << endl;
+            for (short i = 0; i < NET_BUFFERLEN; i++) {
+                //cout << i << "\t" << (short)buffer[i] << "\t" << buffer[i] << endl;
+                if (buffer[i] == ' ')
+                    newbuf[i] = '_';
+                else
+                    newbuf[i] = buffer[i];
+            }
+            //cout << endl << ":BEND" << endl;
+            */
+
             int send_len = sendto(s, buffer, strlen(buffer), 0, (SOCKADDR*)&sother, slen);
-            if (send_len == SOCKET_ERROR) {
-                cout << "[SEND] (" << address << ":" << port << ") Error - didn't send anything! (EC:" << WSAGetLastError() << ")" << endl;
-            } else {
-                cout << "[SEND] (" << address << ":" << port << ") <- " << buffer << endl;
+            if (netVerbose) {
+                if (send_len == SOCKET_ERROR) {
+                    cout << "[SEND] (" << address << ":" << port << ") Error - didn't send anything! (EC:" << WSAGetLastError() << ")" << endl;
+                } else {
+                    cout << "[SEND] (" << address << ":" << port << ") <- " << buffer << endl;
+                }
             }
         }
 
@@ -222,7 +239,14 @@ class Networking {
             result.address = inet_ntoa(sother.sin_addr);
             result.port = ntohs(sother.sin_port);
             for (short i = 0; i < NET_BUFFERLEN; i++) {
+                // original line
                 result.data[i] = buffer[i];
+
+                // swap underscores with spaces
+                //if (buffer[i] == '_')
+                //    result.data[i] = ' ';
+                //else
+                //    result.data[i] = buffer[i];
             }
             return result;
         }
@@ -235,10 +259,26 @@ Networking netw = Networking();
 class Board {
     private:
         short tiles[9];
+        bool inversed = false;
+
+        char getSymbolChar(short symbol) {
+            if (inversed && symbol != 0) {
+                symbol = symbol == 1 ? 2 : 1;
+            }
+            return SYMBOLS[symbol];
+        }
 
 
 
     public:
+        void setInversed(bool inversed) {
+            this->inversed = inversed;
+        }
+
+        bool getInversed() {
+            return inversed;
+        }
+
         void setSymbol(int tile, short value) {
             tiles[tile] = value;
         }
@@ -282,7 +322,8 @@ class Board {
         void print() {
             for (int i = 0; i < 3; i++) {
                 for (int j = 0; j < 3; j++) {
-                    char symbol = SYMBOLS[tiles[i * 3 + j]];
+                    short x = tiles[i * 3 + j];
+                    char symbol = getSymbolChar(x);
                     cout << " " << symbol << " ";
                     if (j < 2) {
                         cout << "|";
@@ -303,6 +344,7 @@ class Game {
         // game variables
         Board board = Board();
         short turn = 1; // 1-gracz albo 2-komputer
+        short starter = 0; // kto zaczal obecnie trwajaca gre: 1-gracz albo 2-komputer
         short winner = 0; // -1: remis, 0: gra trwa, 1: gracz, 2: komputer
         bool aiPlaced = false;
 
@@ -338,7 +380,14 @@ class Game {
 
         void reset() {
             board.reset();
-            turn = gameMode < 2 ? 1 : 2;
+            board.setInversed(gameMode == 2);
+
+            if (starter == 0) {
+                turn = gameMode == 2 ? 2 : 1;
+            } else {
+                turn = starter == 1 ? 2 : 1;
+            }
+            starter = turn;
             winner = 0;
         }
 
@@ -369,8 +418,10 @@ class Game {
             cout << " --- KOLKO I KRZYZYK --- " << endl;
             cout << endl;
 
-            cout << "<<< " << playerName << " " << playerScore << " - " << opponentScore << " " << opponentName << " >>>" << endl;
-            cout << endl;
+            cout << (turn == 1 ? ">>> " : "    ");
+            cout << playerName << " " << playerScore << " - " << opponentScore << " " << opponentName;
+            cout << (turn == 1 ? "    " : " <<<");
+            cout << endl << endl;
 
             board.print();
             cout << endl;
@@ -579,12 +630,26 @@ class Opponent {
 
 
 
-        void markJoined() {
-            joined = true;
+        void setJoined(bool joined) {
+            this->joined = joined;
         }
 
         bool hasJoined() {
             return joined;
+        }
+
+
+
+        void waitFor() {
+            if (gameMode > 0 && !hasJoined()) {
+                cout << "Oczekiwanie na drugiego gracza..." << endl;
+                // czekamy az drugi gracz dojdzie
+                while (!hasJoined()) {
+                    sleep(500);
+                }
+            }
+            // gasimy flage
+            setJoined(false);
         }
 
 
@@ -638,6 +703,17 @@ void aiMain() {
 
 
 
+void netAliveMain() {
+    // bardzo prosty watek ktory ciagle wysyla sygnal alive,
+    // musimy to zrobic bo powyzszy watek skupia sie na uzyskiwaniu informacji
+    // a nie wysylaniu ich "z niczego"
+    while (true) {
+        netw.send("alive");
+        sleep(1000);
+    }
+}
+
+
 
 void netMain() {
     if (gameMode == 0)
@@ -650,6 +726,8 @@ void netMain() {
         netw.send("hello");
     }
 
+    thread netAlive(netAliveMain);
+
     while (true) {
         // petla przerwie sie w momencie wystapienia bledu, np. gdy zamkniemy polaczenie
         NET_RECVDATA data = netw.recv();
@@ -658,7 +736,7 @@ void netMain() {
         // interpretujemy rozne komunikaty
         if (msg.compare("hello") == 0 && isServer) {
             // serwer: gdy dostaniemy hello (sygnal ze podlaczyl sie klient)
-            opp.markJoined();
+            opp.setJoined(true);
             netw.send("hosthello");
             stringstream ss;
             ss << "oppname|" << game.getPlayerName();
@@ -666,7 +744,7 @@ void netMain() {
         }
         else if (msg.compare("hosthello") == 0 && !isServer) {
             // klient: gdy serwer odbierze hello i zwraca potwierdzenie
-            opp.markJoined();
+            opp.setJoined(true);
             stringstream ss;
             ss << "oppname|" << game.getPlayerName();
             netw.send(ss.str().c_str());
@@ -680,9 +758,16 @@ void netMain() {
             short x = stoi(msg.substr(5));
             opp.place(x);
         }
+        else if (msg.compare("again") == 0) {
+            // jezeli przeciwnik chce grac dalej
+            opp.setJoined(true);
+        }
 
-        recvPrint(data);
+        if (netVerbose)
+            recvPrint(data);
     }
+
+    netAlive.join();
 }
 
 
@@ -715,22 +800,19 @@ int main() {
     cout << "Your game mode is: " << gameMode << endl;
 
     thread net(netMain);
-    if (gameMode > 0 && !opp.hasJoined()) {
-        cout << "Oczekiwanie na drugiego gracza..." << endl;
-        // czekamy az drugi gracz dojdzie
-        while (!opp.hasJoined()) {
-            sleep(500);
-        }
-    }
 
     bool again = true;
     while (again) {
+        opp.waitFor();
         game.reset();
         thread ai(aiMain);
         game.loop();
         ai.join();
 
         again = askYesOrNo("Czy chcesz zagrac jeszcze raz?");
+        if (again) {
+            netw.send("again");
+        }
     }
 
     netw.stop();
